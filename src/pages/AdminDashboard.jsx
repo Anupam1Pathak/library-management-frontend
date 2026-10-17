@@ -10,6 +10,12 @@ function AdminDashboard() {
   const [message, setMessage] = useState("");
   const [editingBook, setEditingBook] = useState(null);
 
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogResults, setCatalogResults] = useState([]);
+  const [selectedCatalog, setSelectedCatalog] = useState({});
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
+
   const [stats, setStats] = useState({
     totalBooks: 0,
     totalUsers: 0,
@@ -28,7 +34,7 @@ function AdminDashboard() {
     quantity: 1,
   });
 
-  // Fetch all books
+  // FETCH ALL BOOKS
   const fetchBooks = async () => {
     try {
       const response = await api.get("/books");
@@ -47,7 +53,7 @@ function AdminDashboard() {
     }
   };
 
-  // Fetch dashboard statistics from backend
+  // FETCH DASHBOARD STATISTICS
   const fetchDashboardStats = async () => {
     try {
       setStatsLoading(true);
@@ -73,7 +79,153 @@ function AdminDashboard() {
     fetchDashboardStats();
   }, []);
 
-  // Handle Add Book form changes
+  // GET AN ONLINE BOOK LINK.
+  // Always returns a URL, even if full-text reading is unavailable.
+  const getCatalogReadUrl = (book) => {
+    if (
+      typeof book.detailsUrl === "string" &&
+      book.detailsUrl.startsWith("https://openlibrary.org/")
+    ) {
+      return book.detailsUrl;
+    }
+
+    const volumeId = book.volumeId || book.key;
+
+    if (
+      typeof volumeId === "string" &&
+      volumeId.startsWith("/works/")
+    ) {
+      return `https://openlibrary.org${volumeId}`;
+    }
+
+    const query = `${book.title || ""} ${book.author || ""}`.trim();
+
+    return `https://openlibrary.org/search?q=${encodeURIComponent(
+      query
+    )}`;
+  };
+
+  // SEARCH OPEN LIBRARY
+  const searchCatalog = async (e) => {
+    e.preventDefault();
+
+    if (!catalogSearch.trim()) {
+      setError("Enter a book title or author to search.");
+      return;
+    }
+
+    setError("");
+    setMessage("");
+    setCatalogLoading(true);
+    setCatalogResults([]);
+    setSelectedCatalog({});
+
+    try {
+      const response = await api.get("/books/catalog/search", {
+        params: { q: catalogSearch.trim() },
+      });
+
+      const results = response.data.books || [];
+      setCatalogResults(results);
+
+      if (results.length === 0) {
+        setMessage("No books found. Try another title or author.");
+      }
+    } catch (err) {
+      setError(
+        err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Failed to search Open Library."
+      );
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+
+  // SELECT OR UNSELECT A CATALOG BOOK
+  const toggleCatalogBook = (book, checked) => {
+    setSelectedCatalog((previous) => {
+      const updated = { ...previous };
+
+      if (checked) {
+        updated[book.volumeId] = {
+          volumeId: book.volumeId,
+          title: book.title,
+          author: book.author,
+          isbn: book.isbn,
+          category: book.category,
+          quantity: 1,
+        };
+      } else {
+        delete updated[book.volumeId];
+      }
+
+      return updated;
+    });
+  };
+
+  // IMPORT SELECTED BOOKS
+  const importSelectedBooks = async () => {
+    const selectedBooks = Object.values(selectedCatalog);
+
+    if (selectedBooks.length === 0) {
+      setError("Select at least one book to import.");
+      return;
+    }
+
+    if (selectedBooks.length > 50) {
+      setError("You can import a maximum of 50 books at a time.");
+      return;
+    }
+
+    const invalidQuantity = selectedBooks.some(
+      (book) =>
+        !Number.isInteger(Number(book.quantity)) ||
+        Number(book.quantity) < 1
+    );
+
+    if (invalidQuantity) {
+      setError(
+        "Every selected book must have a positive whole-number copy quantity."
+      );
+      return;
+    }
+
+    setError("");
+    setMessage("");
+    setImportLoading(true);
+
+    try {
+      const response = await api.post("/books/catalog/import", {
+        books: selectedBooks.map((book) => ({
+          volumeId: book.volumeId,
+          title: book.title,
+          author: book.author,
+          isbn: book.isbn,
+          category: book.category,
+          quantity: Number(book.quantity),
+        })),
+      });
+
+      setMessage(
+        `Import complete: ${response.data.imported} imported, ${response.data.skipped} skipped.`
+      );
+
+      setSelectedCatalog({});
+      await fetchBooks();
+      await fetchDashboardStats();
+    } catch (err) {
+      setError(
+        err.response?.data?.error ||
+          err.response?.data?.message ||
+          "Failed to import selected books."
+      );
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  // HANDLE MANUAL BOOK FORM CHANGES
   const handleChange = (e) => {
     const { name, value } = e.target;
 
@@ -83,7 +235,7 @@ function AdminDashboard() {
     }));
   };
 
-  // Add a book
+  // ADD BOOK MANUALLY
   const addBook = async (e) => {
     e.preventDefault();
     setError("");
@@ -123,7 +275,7 @@ function AdminDashboard() {
     }
   };
 
-  // Open the Edit Book form
+  // OPEN EDIT FORM
   const editBook = (book) => {
     setError("");
     setMessage("");
@@ -138,7 +290,7 @@ function AdminDashboard() {
     });
   };
 
-  // Update a book
+  // SAVE EDITED BOOK
   const saveEditedBook = async (e) => {
     e.preventDefault();
 
@@ -192,7 +344,7 @@ function AdminDashboard() {
     }
   };
 
-  // Delete a book
+  // DELETE BOOK
   const deleteBook = async (book) => {
     const confirmed = window.confirm(
       `Are you sure you want to delete "${book.title}"?`
@@ -266,7 +418,7 @@ function AdminDashboard() {
 
   return (
     <div className="admin-dashboard">
-      {/* Dashboard Header */}
+      {/* DASHBOARD HEADER */}
       <div className="admin-header">
         <div>
           <p className="admin-eyebrow">
@@ -286,7 +438,7 @@ function AdminDashboard() {
         </div>
       </div>
 
-      {/* Dashboard Statistics */}
+      {/* DASHBOARD STATISTICS */}
       <section style={{ margin: "25px 0" }}>
         <div
           style={{
@@ -317,12 +469,7 @@ function AdminDashboard() {
         </div>
 
         {statsError && (
-          <p
-            style={{
-              color: "#b91c1c",
-              marginBottom: "12px",
-            }}
-          >
+          <p style={{ color: "#b91c1c", marginBottom: "12px" }}>
             {statsError}
           </p>
         )}
@@ -330,8 +477,7 @@ function AdminDashboard() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(200px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
             gap: "18px",
           }}
         >
@@ -382,7 +528,7 @@ function AdminDashboard() {
         </div>
       </section>
 
-      {/* Success and Error Messages */}
+      {/* SUCCESS AND ERROR MESSAGES */}
       {message && (
         <p className="admin-message admin-success">
           {message}
@@ -395,7 +541,7 @@ function AdminDashboard() {
         </p>
       )}
 
-      {/* Edit Book Form */}
+      {/* EDIT BOOK FORM */}
       {editingBook && (
         <section className="admin-section edit-book-section">
           <h2>Edit Book</h2>
@@ -404,10 +550,7 @@ function AdminDashboard() {
             Update the book details and save your changes.
           </p>
 
-          <form
-            className="admin-form"
-            onSubmit={saveEditedBook}
-          >
+          <form className="admin-form" onSubmit={saveEditedBook}>
             <div className="admin-field">
               <label htmlFor="edit-title">Book Title</label>
               <input
@@ -469,9 +612,7 @@ function AdminDashboard() {
             </div>
 
             <div className="admin-field">
-              <label htmlFor="edit-quantity">
-                Total Copies
-              </label>
+              <label htmlFor="edit-quantity">Total Copies</label>
               <input
                 id="edit-quantity"
                 type="number"
@@ -489,10 +630,7 @@ function AdminDashboard() {
             </div>
 
             <div className="admin-form-action edit-actions">
-              <button
-                type="submit"
-                className="admin-add-button"
-              >
+              <button type="submit" className="admin-add-button">
                 Save Changes
               </button>
 
@@ -512,7 +650,182 @@ function AdminDashboard() {
         </section>
       )}
 
-      {/* Add Book Form */}
+      {/* SEARCH AND IMPORT REAL PUBLISHED BOOKS */}
+      <section className="admin-section">
+        <h2>Import Real Published Books</h2>
+
+        <p className="section-description">
+          Search Open Library and add selected titles to your library.
+          Enter the number of physical copies you actually own.
+        </p>
+
+        <form
+          onSubmit={searchCatalog}
+          style={{
+            display: "flex",
+            gap: "10px",
+            flexWrap: "wrap",
+            marginBottom: "20px",
+          }}
+        >
+          <input
+            type="text"
+            value={catalogSearch}
+            onChange={(e) => setCatalogSearch(e.target.value)}
+            placeholder="Search by book title or author..."
+            style={{
+              flex: "1",
+              minWidth: "220px",
+              padding: "12px",
+              border: "1px solid #d1d5db",
+              borderRadius: "7px",
+            }}
+          />
+
+          <button type="submit" disabled={catalogLoading}>
+            {catalogLoading ? "Searching..." : "Search Books"}
+          </button>
+        </form>
+
+        {/* CATALOG SEARCH RESULTS */}
+        {catalogResults.map((book) => {
+          const selected = selectedCatalog[book.volumeId];
+
+          const canSelect = Boolean(
+            book.volumeId &&
+              book.title &&
+              book.author &&
+              book.isbn
+          );
+
+          return (
+            <div
+              key={book.volumeId || `${book.title}-${book.author}`}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "12px",
+                border: "1px solid #e5e7eb",
+                borderRadius: "8px",
+                padding: "14px",
+                marginBottom: "12px",
+              }}
+            >
+              {book.thumbnail && (
+                <img
+                  src={book.thumbnail}
+                  alt={`Cover of ${book.title}`}
+                  loading="lazy"
+                  style={{
+                    width: "65px",
+                    maxHeight: "100px",
+                    objectFit: "contain",
+                  }}
+                />
+              )}
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h3 style={{ marginTop: 0 }}>{book.title}</h3>
+
+                <p>Author: {book.author || "Not available"}</p>
+                <p>Category: {book.category || "General"}</p>
+                <p>ISBN: {book.isbn || "Not available"}</p>
+
+                {/* READ ONLINE BUTTON - ALWAYS VISIBLE */}
+                <a
+                  href={getCatalogReadUrl(book)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "inline-block",
+                    margin: "4px 0 12px",
+                    padding: "9px 14px",
+                    borderRadius: "6px",
+                    backgroundColor: "#15803d",
+                    color: "#ffffff",
+                    textDecoration: "none",
+                    fontWeight: 600,
+                  }}
+                >
+                  Read Online
+                </a>
+
+                {!canSelect && (
+                  <p style={{ color: "#b91c1c" }}>
+                    This result is missing a title, author, or ISBN
+                    and cannot be imported.
+                  </p>
+                )}
+
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(selected)}
+                    disabled={!canSelect}
+                    onChange={(e) =>
+                      toggleCatalogBook(book, e.target.checked)
+                    }
+                  />
+                  Select book
+                </label>
+
+                {selected && (
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      marginTop: "10px",
+                    }}
+                  >
+                    Physical copies:
+
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={selected.quantity}
+                      onChange={(e) =>
+                        setSelectedCatalog((previous) => ({
+                          ...previous,
+                          [book.volumeId]: {
+                            ...previous[book.volumeId],
+                            quantity: e.target.value,
+                          },
+                        }))
+                      }
+                      style={{ width: "85px", padding: "6px" }}
+                    />
+                  </label>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {catalogResults.length > 0 && (
+          <button
+            type="button"
+            onClick={importSelectedBooks}
+            disabled={
+              importLoading ||
+              Object.keys(selectedCatalog).length === 0
+            }
+          >
+            {importLoading
+              ? "Importing..."
+              : `Import Selected (${Object.keys(selectedCatalog).length})`}
+          </button>
+        )}
+      </section>
+
+      {/* ADD BOOK MANUALLY */}
       <section className="admin-section">
         <h2>Add New Book</h2>
 
@@ -584,17 +897,14 @@ function AdminDashboard() {
           </div>
 
           <div className="admin-form-action">
-            <button
-              type="submit"
-              className="admin-add-button"
-            >
+            <button type="submit" className="admin-add-button">
               + Add Book
             </button>
           </div>
         </form>
       </section>
 
-      {/* Manage Books */}
+      {/* MANAGE BOOKS */}
       <section className="admin-section">
         <div className="admin-section-heading">
           <div>
@@ -606,8 +916,7 @@ function AdminDashboard() {
           </div>
 
           <span className="book-count">
-            {books.length}{" "}
-            {books.length === 1 ? "book" : "books"}
+            {books.length} {books.length === 1 ? "book" : "books"}
           </span>
         </div>
 
@@ -619,10 +928,7 @@ function AdminDashboard() {
         ) : (
           <div className="admin-books-grid">
             {books.map((book) => (
-              <div
-                className="admin-book-card"
-                key={book._id}
-              >
+              <div className="admin-book-card" key={book._id}>
                 <div className="book-card-top">
                   <div className="book-icon">BOOK</div>
 
